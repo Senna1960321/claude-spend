@@ -164,17 +164,42 @@ async function parseAllSessions() {
   const modelMap = {};
   const allPrompts = []; // for "most expensive prompts" across all sessions
 
+  // Recursively walk the project dir so subagent transcripts at
+  // `<project>/<session-id>/subagents/agent-*.jsonl` are picked up too.
+  // Without this, sessions that use the Task tool / subagents undercount
+  // their token usage by ~30%, since subagent transcripts live one level
+  // deeper than the readdirSync default scan.
+  function findJsonlRecursive(rootDir) {
+    const found = [];
+    const stack = [rootDir];
+    while (stack.length) {
+      const cur = stack.pop();
+      let entries;
+      try {
+        entries = fs.readdirSync(cur, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const ent of entries) {
+        const full = path.join(cur, ent.name);
+        if (ent.isDirectory()) stack.push(full);
+        else if (ent.isFile() && ent.name.endsWith('.jsonl')) found.push(full);
+      }
+    }
+    return found;
+  }
+
   for (const projectDir of projectDirs) {
     const dir = path.join(projectsDir, projectDir);
     let files;
     try {
-      files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'));
+      files = findJsonlRecursive(dir);
     } catch {
       continue; // Skip directories we can't read
     }
 
     for (const file of files) {
-      const filePath = path.join(dir, file);
+      const filePath = file; // findJsonlRecursive returns absolute paths
       const sessionId = path.basename(file, '.jsonl');
 
       let entries;
